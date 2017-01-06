@@ -63,22 +63,15 @@ namespace
         }
 
         std::vector<Point3> compute_streamline(std::shared_ptr< const TensorFieldContinuous< 3, Vector3 > > &field, double x, double y){
-            //infoLog() << x << ";" << y << std::endl;
             std::vector<Point3> points = runge_kutta(field, 50, 0.1, {x,y,0});
             return points;
         }
-int bla = 0;
+
         double compute_convolution(std::shared_ptr< Texture > &noise, std::vector<Point3> points){
             double sum = 0;
             for(size_t i=0; i<points.size(); i++){
                 Point3 p = points[i];
-                if (bla == 0) {
-                    infoLog() << p[0] << ";" << p[1] << std::endl;
-                    infoLog() <<((p[0]+10)*10)/2 << ";" << ((p[1]+10)*10)/2 << std::endl;
-                    bla++;
-                }
                 sum += noise->get(((p[0]+10)*10.)/2.,((p[1]+10)*10.)/2., 0).r();
-               // break;
             }
             sum /= points.size();
             return sum;
@@ -92,9 +85,7 @@ int bla = 0;
             //return points;
             Point3 point = start;
             points.push_back(point);
-            if (bla == 0) {
-                infoLog() << "k:" << point[0] << ";" << point[1] << std::endl;
-            }
+
             for (size_t i = 0; i < steps; i++) {
                 if (evaluator->reset(point)) {
                     // Berechne q1-q4
@@ -126,6 +117,7 @@ int bla = 0;
                     break; // nicht mehr in Domain
                 }
             }
+            // backward?
             return points;
         }
 
@@ -148,9 +140,6 @@ int bla = 0;
             // LIC
             for( size_t y = 0; y < lic->height(); ++y ) {
                 for (size_t x = 0; x < lic->width(); ++x){
-                    if (bla == 0) {
-                        infoLog()<< "lic: " << ((x/10.)*2.)-10 << ";" << ((y/10.)*2.)-10 << std::endl;
-                    }
                     std::vector<Point3> points = compute_streamline(field, ((x/10.)*2.)-10, ((y/10.)*2.)-10);
                     double sum = compute_convolution(noise, points);
                     lic->set( {sum, sum, sum}, x, y);
