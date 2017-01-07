@@ -69,7 +69,7 @@ namespace
 		    return ((h&1)? -u : u) + ((h&2)? -2.0f*v : 2.0f*v);
 		}
 
-		float noise(float x, float y){
+		float myNoise(float x, float y){
 			std::vector<int> p = PermutationVektor(); 
 
 			#define F2 0.366025403f // F2 = 0.5*(sqrt(3.0)-1.0)
@@ -161,7 +161,7 @@ namespace
                 for( size_t i = 0; i < texture->width(); ++i )
                 {
                     if (noise) {
-                        double color = noise(i,j);
+                        double color = myNoise(i,j);
                         texture->set({color, color, color}, i, j);
                     } else{
                         texture->set({1, 0, 0}, i, j);
