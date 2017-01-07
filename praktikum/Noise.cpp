@@ -161,7 +161,7 @@ namespace
                 for( size_t i = 0; i < texture->width(); ++i )
                 {
                     if (noise) {
-                        double color = myNoise(i,j);
+                        double color = (myNoise(i,j)+1.0)*0.5;
                         texture->set({color, color, color}, i, j);
                     } else{
                         texture->set({1, 0, 0}, i, j);
@@ -289,6 +289,6 @@ namespace
             licTexture->add( Primitive::QUADS ).setTexCoords( 0, texCoords ).setVertices( cube2, sides );
         }
     };
-    AlgorithmRegister< LIC > reg( "VisPraktikum/LIC", "LIC");
+    AlgorithmRegister< LIC > reg( "VisPraktikum/LIC2", "LIC mit Simplex Noise");
 }
 
