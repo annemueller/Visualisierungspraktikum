@@ -20,8 +20,8 @@ namespace {
         const size_t minHitsStreamLines = 1;
 
         const size_t L = 40; // wie viele Pixel maximal in Berechnung nutzen?
-        const size_t B = 15; // wie viele Nachbarn zu {sx,sy} duerfen einen Wert bekommen?
-        const size_t max_hits = 10;
+        const int B = 20; // wie viele Nachbarn zu {sx,sy} duerfen einen Wert bekommen?
+        const size_t max_hits = 20;
 
     public:
         struct Options : public VisAlgorithm::Options {
@@ -174,8 +174,8 @@ namespace {
                 pixel_list.insert(pixel_list.end(), all_pixels[0].begin()+1, all_pixels[0].end());
             }
 
-            size_t start = (pos_mid - 15) >= 0 ? pos_mid-15 : 0; // linker Rand
-            size_t ende = (pos_mid+15) > pixel_list.size() ? pixel_list.size() : pos_mid+15; // rechter Rand
+            size_t start = 0;//(pos_mid - B) >= 0 ? pos_mid-B : 0; // linker Rand
+            size_t ende = pixel_list.size();//(pos_mid + B) > pixel_list.size() ? pixel_list.size() : pos_mid+B; // rechter Rand
 
             for(size_t ne=start; ne < ende; ne++) {
                 size_t xpos = pixel_list[ne][0]>=anzPixelTexture ? anzPixelTexture-1 : pixel_list[ne][0];
@@ -188,9 +188,9 @@ namespace {
 
                 double val = 0;
                 int anzahl = 0;
-                int pos = pos_mid;
+                int pos = ne;//pos_mid;
 
-                for (int i = -20; i <= 20; i++) {
+                for (int i = -B; i <= B; i++) {
                     if (pos + i < 0 or pos + i > pixel_list.size() - 1)
                         continue;
                     val += noise->get(pixel_list[pos + i][0], pixel_list[pos + i][1], 0).r();
