@@ -9,14 +9,17 @@
 #include <fantom/graphics.hpp>
 #include <fantom/fields.hpp>
 #include "perlin.h"
+#include "runge_kutta.h"
 
 using namespace fantom;
 namespace {
     class LIC : public VisAlgorithm {
         std::unique_ptr<Primitive> noiseTexture;
+        std::unique_ptr<Primitive> noiseTexture2D;
         std::unique_ptr<Primitive> licTexture;
 
-        const size_t anzPixelTexture = 400;
+        size_t anzPixelTexturex = 0;
+        size_t anzPixelTexturey = 0;
         const size_t minHitsStreamLines = 1;
 
         const size_t L = 40; // wie viele Pixel maximal in Berechnung nutzen?
@@ -28,7 +31,12 @@ namespace {
             Options(fantom::Options::Control &control)
                     : VisAlgorithm::Options(control) {
                 add<TensorFieldContinuous<3, Vector3> >("Field", "A 3D vector field");
+                add<Grid<3> >("Grid", "A 3D vector field");
+                add< int >("Number of pixel", "How many pixel per triangle?", 10, &acceptNumber);
+            }
 
+            static int acceptNumber(const int& i){
+                return std::max(i , 5);
             }
         };
 
@@ -37,6 +45,7 @@ namespace {
                     : VisAlgorithm::VisOutputs(control) {
                 addGraphics("noiseTexture");
                 addGraphics("licTexture");
+                addGraphics("noiseTexture2D");
             }
         };
 
@@ -63,47 +72,31 @@ namespace {
             return texture;
         }
 
-        inline Point2 coord_to_field(double x, double y){
-            size_t len = anzPixelTexture / 10;
-            double fx = (x / len) * 2.0 - 10;
-            double fy = (y / len) * 2.0 - 10;
-            return {fx, fy};
+        inline Point3 coord_to_field(double v, double k, Cell c, const ValueArray<Point3> &points){
+            Point3 p0 = points[c.index(0)];
+            Point3 p1 = points[c.index(1)];
+            Point3 p2 = points[c.index(2)];
+            Point3 a = p2-p0;
+            Point3 b = p1-p0;
+            Point3 x = v * a + k * b + p0;
+            return x;
         }
 
-        inline Point2 coord_to_texture(Point3 coord){
-            size_t len = anzPixelTexture / 10;
-            float x = (coord[0] + 10) * len / 2.0;
-            float y = (coord[1] + 10) * len / 2.0;
-            return {x, y};
+        inline Point3 coord_to_texture(double v, double k, size_t index, double part){
+            Point3 p0 = {(index%500)/500.0      , (index/500)*part, 0};
+            Point3 p1 = {(index%500)/500.0      , (index/500)*part+part, 0};
+            Point3 p2 = {((index%500)+1)/500.0  , (index/500)*part+part, 0};
+
+            Point3 a = p2-p0;
+            Point3 b = p1-p0;
+            Point3 x = v * a + k * b + p0;
+            return x;
         }
 
-        std::vector<std::vector<Point3>> compute_streamline(std::shared_ptr<const TensorFieldContinuous<3, Vector3> > &field, double x, double y) {
-            std::vector<Point3> points = runge_kutta(field, 20, 1, {x, y, 0}, true); // foreward
-            std::vector<Point3> points2 = runge_kutta(field, 20, 1, {x, y, 0}, false); // bachward
+        std::vector<std::vector<Point3>> compute_streamline(std::shared_ptr<const TensorFieldContinuous<3, Vector3> > &field, Point3 fcoord) {
+            std::vector<Point3> points = runge_kutta(field, 20, 1, fcoord, true); // foreward
+            std::vector<Point3> points2 = runge_kutta(field, 20, 1, fcoord, false); // bachward
             return {points, points2};
-        }
-
-        inline std::vector<std::vector<size_t>> bresenham(size_t x0, size_t y0, size_t x1, size_t y1)
-        {
-            std::vector<std::vector<size_t>> points;
-
-            int dx =  abs(x1-x0), sx = x0<x1 ? 1 : -1;
-            int dy = -abs(y1-y0), sy = y0<y1 ? 1 : -1;
-            int err = dx+dy, e2; /* error value e_xy */
-
-            // push 1.
-
-            while(true){
-                points.push_back({x0,y0});
-                if (x0==x1 && y0==y1) break;
-                e2 = 2*err;
-                if (e2 > dy) { err += dy; x0 += sx; } /* e_xy+e_x > 0 */
-                if (e2 < dx) { err += dx; y0 += sy; } /* e_xy+e_y < 0 */
-                //if (x0==x1 && y0==y1) break;
-                // push naechsten, verhindert doppelte am Ende
-
-            }
-            return points;
         }
 
         void compute_convolution(std::shared_ptr<Texture> &noise, std::vector<std::vector<Point3>> &pointsStreamline, size_t sx, size_t sy, std::vector<std::vector<double>> &values, std::vector<std::vector<double>> &hits) {
@@ -112,7 +105,7 @@ namespace {
             const size_t B = 15; // wie viele Nachbarn zu {sx,sy} duerfen einen Wert bekommen?
             const size_t max_hits = 10;
              */
-
+/*
             // Berechne von Stromlinie getroffene Pixel, nach Bresenham
 
             // Liste mit 2 Eintraegen (fore- and backward), die jeweils eine Liste mit Vektoren enthalten, den Punkten
@@ -135,7 +128,7 @@ namespace {
 
                     int dx =  abs(x1-x0), sx = x0<x1 ? 1 : -1;
                     int dy = -abs(y1-y0), sy = y0<y1 ? 1 : -1;
-                    int err = dx+dy, e2; /* error value e_xy */
+                    int err = dx+dy, e2; // error value e_xy
 
                     pixels.push_back({x0, y0}); // Startpixel
                     anz_pixel++;
@@ -162,6 +155,7 @@ namespace {
                 }
 
                 all_pixels.push_back(pixels);
+
             }
 
             std::vector<std::vector<size_t>> pixel_list = all_pixels[1]; // erst die backward
@@ -207,86 +201,49 @@ namespace {
                     hits[ypos][xpos] += 1;
                 }
             }
-        }
-
-        std::vector<Point3>
-        runge_kutta(std::shared_ptr<const TensorFieldContinuous<3, Vector3> > &field, size_t steps, double h,
-                    Point3 start, bool vor) {
-            auto evaluator = field->makeEvaluator();
-
-            std::vector<Point3> points;
-            //return points;
-            Point3 point = {start[0], start[1], start[2]};
-            points.push_back(point);
-
-            for (size_t i = 0; i < steps; i++) {
-                if (evaluator->reset(point)) {
-                    // Berechne q1-q4
-                    auto v = evaluator->value();
-                    Point3 q1 = h * v;
-                    if (vor == false){
-                        q1 = -q1;
-                    }
-                    if (evaluator->reset(point + 0.5 * q1)) {
-                        v = evaluator->value();
-                        Point3 q2 = h * v;
-                        if (vor ==false){
-                            q2 = -q2;
-                        }
-                        if (evaluator->reset(point + 0.5 * q2)) {
-                            v = evaluator->value();
-                            Point3 q3 = h * v;
-                            if (vor ==false){
-                                q3 = -q3;
-                            }
-                            if (evaluator->reset(point + 0.5 * q3)) {
-                                v = evaluator->value();
-                                Point3 q4 = h * v;
-                                if (vor ==false){
-                                    q4 = -q4;
-                                }
-                                point = point + (1.0 / 6.0) * (q1 + 2 * q2 + 2 * q3 + q4);
-                                points.push_back(point);
-                            } else {
-                                break; // nicht mehr in Domain
-                            }
-
-                        } else {
-                            break; // nicht mehr in Domain
-                        }
-                    } else {
-                        break; // nicht mehr in Domain
-                    }
-                } else {
-                    break; // nicht mehr in Domain
-                }
-            }
-            return points;
+*/
         }
 
         virtual void execute(const Algorithm::Options &options, const volatile bool &abortFlag) override {
             std::shared_ptr<const TensorFieldContinuous<3, Vector3> > field = options.get<TensorFieldContinuous<3, Vector3> >(
                     "Field");
+            std::shared_ptr<const Grid<3 >> grid = options.get<Grid<3> >("Grid");
 
-            if (!field) {
-                debugLog() << "Input Field not set!" << std::endl;
+            if (!field or !grid) {
+                debugLog() << "Input not set!" << std::endl;
                 return;
             }
 
+            // Variablen anlegen
+            const ValueArray<Point3> &points = grid->points();
+            size_t numCells = grid->numCells();
+            int numPixels = options.get<int>("Number of pixel");
+            int numRows = numCells/500.0 + 1.0;
+            double partition = 1.00/numRows;
+            anzPixelTexturex = numPixels*500+1;
+            anzPixelTexturey = numRows*numPixels+1;
+
+            infoLog() << "Schritt 1: Texturen erzeugen." << std::endl;
+
             noiseTexture = getGraphics("noiseTexture").makePrimitive();
+            noiseTexture2D = getGraphics("noiseTexture2D").makePrimitive();
             licTexture = getGraphics("licTexture").makePrimitive();
 
-            std::shared_ptr<Texture> noise = createTexture(anzPixelTexture, anzPixelTexture, true);
-            std::shared_ptr<Texture> lic = createTexture(anzPixelTexture, anzPixelTexture, false);
+            std::shared_ptr< Texture > noise = createTexture(anzPixelTexturex, anzPixelTexturey, true);
+            noiseTexture->setTexture(0, *noise);
+            std::shared_ptr< Texture > noise2D = createTexture(anzPixelTexturex, anzPixelTexturey, true);
+            noiseTexture2D->setTexture(0, *noise2D);
+            std::shared_ptr<Texture> lic = createTexture(anzPixelTexturex, anzPixelTexturey, false);
+            licTexture->setTexture(0, *lic);
 
             std::vector<std::vector<double>> values;
             std::vector<std::vector<double>> hits;
 
-            // Init: summierte Farbwerte und ANzahl Treffer pro Pixel
-            for (size_t y = 0; y < anzPixelTexture; y++) {
+            // Init: summierte Farbwerte und Anzahl Treffer pro Pixel = 0
+            for (size_t y = 0; y < anzPixelTexturey; y++) {
                 std::vector<double> xval;
                 std::vector<double> xhits;
-                for (size_t x = 0; x < anzPixelTexture; x++) {
+                for (size_t x = 0; x < anzPixelTexturex; x++) {
                     xval.push_back(0);
                     xhits.push_back(0);
                 }
@@ -294,64 +251,135 @@ namespace {
                 hits.push_back(xhits);
             }
 
-            infoLog() << "Starte LIC" << std::endl;
+            infoLog() << "Schritt 2: Starte LIC." << std::endl;
 
-            // LIC
-            for (size_t y = 0; y < anzPixelTexture; ++y) {
-                for (size_t x = 0; x < anzPixelTexture; ++x) {
-                    Point2 fcoord = coord_to_field(x, y);
-                    if (hits[y][x] >= minHitsStreamLines) {
+            size_t d2_in = 0;
+            size_t d2_out = 0;
+            size_t d3_in = 0;
+            size_t d3_out = 0;
+
+            size_t akt_cell = 0;
+            for (size_t yy=0; yy < 0*2+1*numRows; yy++){
+                for (size_t xx=0; xx < 0*2+1*500; xx++){
+                    // numPixels * numPixels fuer das eine Dreieck
+                    size_t index_cell = akt_cell++;
+                    if(index_cell >= numCells){
                         continue;
                     }
-                    std::vector<std::vector<Point3>> points = compute_streamline(field, fcoord[0], fcoord[1]);
-                    compute_convolution(noise, points, x, y, values, hits);
+
+                    // Welches Dreieck ist das?
+                    Cell c = grid->cell(index_cell);
+                    Point3 p0 = {xx*numPixels, yy*numPixels, 0};
+                    Point3 p1 = {xx*numPixels, yy*numPixels + numPixels, 0};
+                    Point3 p2 = {xx*numPixels+numPixels, yy*numPixels + numPixels, 0};
+                    Point3 b = p2-p0;
+                    Point3 a = p1-p0;
+
+                    for (size_t y=0; y <= numPixels; y++){
+                        for (size_t x=0; x <= numPixels; x++){
+                            size_t pos_x = xx*numPixels+x;
+                            size_t pos_y = yy*numPixels+y;
+                            //hits[pos_y][pos_x] = -1;
+
+                            double v = (-b[1]*pos_x + b[0]*pos_y + b[1]*p0[0] -b[0]*p0[1]) / (b[0]*a[1]-b[1]*a[0]); // nach Formel berechnet, wenn 0<= v <= 1, dann okay
+                            double k = (pos_x-p0[0] - v*a[0]) / (b[0]); // nach Formel berechnet, wenn 0<= k <= 1, dann okay
+                            //v = trunc(v*1000) / 1000;
+                            //k = trunc(k*1000) / 1000;
+                            float delta = 0.02;
+                            d2_out++;
+                            if (v+delta > 0 and v-delta < 1){
+                                if(k+delta > 0 and k-delta < 1){
+                                    hits[pos_y][pos_x] = -1;
+                                    Point3 fcoord = coord_to_field(v, k, c, points);
+                                    d2_in++;
+                                    if (grid->contains(c, fcoord)){
+                                        hits[pos_y][pos_x] = -2;
+                                        d3_in++;
+                                        std::vector<std::vector<Point3>> points = compute_streamline(field, fcoord);
+                                        // TODO: in runge kutta abbrechen, wenn punkt nicht mehr in eigentlicher Zelle ist, sondern schon in einer anderen?
+                                        //compute_convolution(noise, points, x, y, values, hits);
+                                    } else{
+                                        d3_out++;
+                                    }
+                                }
+                            }
+
+                        }
+                    }
                 }
             }
 
-            infoLog() << "Berechne Farbwerte" << std::endl;
-            for (size_t y = 0; y < anzPixelTexture; y++) {
-                for (size_t x = 0; x < anzPixelTexture; x++) {
+            infoLog() << "d2_in:" << d2_in << std::endl;
+            infoLog() << "d2_out:" << d2_out-d2_in << std::endl;
+            infoLog() << "d3_in:" << d3_in << std::endl;
+            infoLog() << "d3_out:" << d3_out << std::endl;
+
+            infoLog() << "Schritt 3: Berechne Farbwerte." << std::endl;
+            for (size_t y = 0; y < anzPixelTexturey; y++) {
+                for (size_t x = 0; x < anzPixelTexturex; x++) {
                     // Color = Summierter Farbwert durch Anzahl Treffer
-                    float sum = values[y][x] / float(hits[y][x]);
-                    /*
-                    if (hits[y][x] <= 1 and values[y][x] < 0.1){
-                        sum = values[x][y] / double(hits[x][y]);
+                    if (hits[y][x] == -1) { // dort kein Dreieck, also kein Pixel
+                        //float sum = values[y][x] / float(hits[y][x]);
+                        //lic->set({sum, sum, sum}, x, y);
+                        lic->set({1, 0, 0}, x, y);
+                        noise2D->set({1, 0, 0}, x, y);
+                    } else if (hits[y][x] == -2) { // dort kein Dreieck, also kein Pixel
+                        //float sum = values[y][x] / float(hits[y][x]);
+                        //lic->set({sum, sum, sum}, x, y);
+                        lic->set({0, 1, 0}, x, y);
+                        noise2D->set({0, 1, 0}, x, y);
+                    } else if (hits[y][x] >= 0){
+                        //Color col = noise->get(x, y, 0);
+                        lic->set({0, 0, 1}, x, y);
+                        noise2D->set({0, 0, 1}, x, y);
+                        //lic->set(col, x, y);
                     }
-                    //double sum = values[y][x] / double(hits[y][x]);
-                     */
-                    lic->set({sum, sum, sum}, x, y);
+                }
+            }
+
+            infoLog() << "Schritt 4: Erzeuge Texturkoordinaten." << std::endl;
+            int start = 0;
+            int end = 500;
+            std::vector< Point3 > texCoords;
+            std::vector< Point3 > vertices;
+            for(int j = 0; j < numRows; j++ ){
+                int cellRow = 0;
+
+                for(int i = start; i < end ; i++){
+
+                    Cell cell = grid->cell(i);
+
+                    vertices.push_back( points[cell.index(0)] );
+                    vertices.push_back( points[cell.index(2)] );
+                    vertices.push_back( points[cell.index(1)] );
+
+                    texCoords.push_back( Point3(cellRow/500.00,j*partition,0) );//1
+                    texCoords.push_back( Point3(cellRow/500.00,j*partition+partition,0) );//2
+                    texCoords.push_back( Point3((cellRow+1)/500.00, j*partition+partition,0) );//3
+                    cellRow += 1;
+                }
+
+                start = end;
+                end = start + 500;
+
+                if(end > numCells){
+                    end = numCells;
                 }
             }
 
             std::vector<Point3> cube(4);
-            cube[0] = Point3(20, -10, 5);
-            cube[1] = Point3(40, -10, 5);
-            cube[2] = Point3(40, 10, 5);
-            cube[3] = Point3(20, 10, 5);
-
-            std::vector<Point3> cube2(4);
-            cube2[0] = Point3(-10, -10, -0.5);
-            cube2[1] = Point3(10, -10, -0.5);
-            cube2[2] = Point3(10, 10, -0.5);
-            cube2[3] = Point3(-10, 10, -0.5);
-
-            std::vector<Point3> texCoords(4);
-            texCoords[0] = Point3(0.0, 0.0, 1.0);
-            texCoords[1] = Point3(1.0, 0.0, 1.0);
-            texCoords[2] = Point3(1.0, 1.0, 1.0);
-            texCoords[3] = Point3(0.0, 1.0, 1.0);
-
+            cube[0] = Point3(0, 0, 5);                               cube[1] = Point3(anzPixelTexturex, 0, 5);
+            cube[2] = Point3(anzPixelTexturex, anzPixelTexturey, 5); cube[3] = Point3(0, anzPixelTexturey, 5);
             std::vector<unsigned int> sides(4);
-            sides[0] = 0;
-            sides[1] = 1;
-            sides[2] = 2;
-            sides[3] = 3;
+            sides[0] = 0; sides[1] = 1;
+            sides[2] = 2; sides[3] = 3;
+            std::vector<Point3> texCoords2D(4);
+            texCoords2D[0] = Point3(0.0, 0.0, 1.0); texCoords2D[1] = Point3(1.0, 0.0, 1.0);
+            texCoords2D[2] = Point3(1.0, 1.0, 1.0); texCoords2D[3] = Point3(0.0, 1.0, 1.0);
 
-            noiseTexture->setTexture(0, *noise);
-            noiseTexture->add(Primitive::QUADS).setTexCoords(0, texCoords).setVertices(cube, sides);
-
-            licTexture->setTexture(0, *lic);
-            licTexture->add(Primitive::QUADS).setTexCoords(0, texCoords).setVertices(cube2, sides);
+            noiseTexture->add( Primitive::TRIANGLES ).setTexCoords( 0, texCoords ).setVertices(vertices);
+            noiseTexture2D->add(Primitive::QUADS).setTexCoords(0, texCoords2D).setVertices(cube, sides);;
+            licTexture->add( Primitive::TRIANGLES ).setTexCoords( 0, texCoords ).setVertices(vertices);
         }
     };
 

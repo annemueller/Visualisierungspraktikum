@@ -1,5 +1,5 @@
 //
-// Created by yves on 08.01.17.
+// Created by kathleen on 08.01.17.
 //
 
 #ifndef VISPRAKTIKUM_PERLIN_H

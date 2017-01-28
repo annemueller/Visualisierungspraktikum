@@ -5,7 +5,6 @@
 #include <cmath>
 #include <random>
 #include <algorithm>
-#include <vector>
 #include <iostream>
 
 #define FASTFLOOR(x) ( ((x)>0) ? ((int)x) : (((int)x)-1) )
