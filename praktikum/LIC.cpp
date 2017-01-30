@@ -1,6 +1,7 @@
 //
 // Created by yves on 05.01.17.
 //
+
 #include <cmath>
 #include <algorithm>
 #include <iostream>
@@ -20,11 +21,13 @@ namespace {
 
         size_t anzPixelTexturex = 0;
         size_t anzPixelTexturey = 0;
-        const size_t minHitsStreamLines = 1;
+        size_t minHitsStreamLines = 1;
 
         const size_t L = 40; // wie viele Pixel maximal in Berechnung nutzen?
         const int B = 20; // wie viele Nachbarn zu {sx,sy} duerfen einen Wert bekommen?
         const size_t max_hits = 20;
+        int max_schritte = 20;
+        double schrittweite = 0.04;
 
     public:
         struct Options : public VisAlgorithm::Options {
@@ -33,10 +36,17 @@ namespace {
                 add<TensorFieldContinuous<3, Vector3> >("Field", "A 3D vector field");
                 add<Grid<3> >("Grid", "A 3D vector field");
                 add< int >("Number of pixel", "How many pixel per triangle?", 10, &acceptNumber);
+                add< int >("Number of steps", "Wie viele Schritte maximal im Runge-Kutta?", 20, &acceptNumber);
+                add< double >("h", "Wie die Schrittweite in Runge-Kutta?", 0.04, &acceptFloat);
+                add< int >("Number of streamlines", "Wie viele Stromlinien pro Pixel maximal?", 1, &acceptNumber);
             }
 
             static int acceptNumber(const int& i){
-                return std::max(i , 5);
+                return std::max(i , 1);
+            }
+
+            static double acceptFloat(const double& i){
+                return std::max(i , 0.001);
             }
         };
 
@@ -55,8 +65,6 @@ namespace {
 
         std::unique_ptr<Texture> createTexture(size_t w, size_t h, bool isNoise = false) {
             std::unique_ptr<Texture> texture = makeTexture(false, w, h, 1);
-            //std::shared_ptr< Texture > texture2D = makeTexture( resourcePath() + "/baal.jpg" );
-            //std::shared_ptr< Texture > texture2D = makeTexture( resourcePath() + "/aaa.jpg" );
             for (size_t j = 0; j < texture->height(); ++j) {
                 for (size_t i = 0; i < texture->width(); ++i) {
                     if (isNoise) {
@@ -83,10 +91,6 @@ namespace {
         }
 
         inline Point3 coord_to_texture(double v, double k, size_t index, double part){
-            /*Point3 p0 = {(index%500)/500.0      , (index/500)*part, 0};
-            Point3 p1 = {(index%500)/500.0      , (index/500)*part+part, 0};
-            Point3 p2 = {((index%500)+1)/500.0  , (index/500)*part+part, 0};
-*/
             Point3 p0 = {(index)%500*part      , size_t(index/500)*part, 0};
             Point3 p1 = {(index%500)*part + part     , size_t(index/500)*part, 0};
             Point3 p2 = {((index)%500)*part + 0.5*part  , size_t(index/500)*part+part, 0};
@@ -122,8 +126,8 @@ namespace {
 
         std::vector<std::vector<Point3>> compute_streamline(std::shared_ptr<const TensorFieldContinuous<3, Vector3> > &field, Point3 fcoord, Cell c, std::shared_ptr<const Grid<3 >> grid) {
             Point3 normale = getNormale(c, grid);
-            std::vector<Point3> points = runge_kutta(field, 20, 0.04, fcoord, true, normale, grid, c); // foreward
-            std::vector<Point3> points2 = runge_kutta(field, 20, 0.04, fcoord, false, normale, grid, c); // bachward
+            std::vector<Point3> points = runge_kutta(field, max_schritte, schrittweite, fcoord, true, normale, grid, c); // foreward
+            std::vector<Point3> points2 = runge_kutta(field, max_schritte, schrittweite, fcoord, false, normale, grid, c); // bachward
             return {points, points2};
         }
 
@@ -270,6 +274,9 @@ namespace {
             size_t numCells = grid->numCells();
             //numCells = 501;
             int numPixels = options.get<int>("Number of pixel");
+            max_schritte = options.get<int>("Number of steps");
+            schrittweite = options.get<double>("h");
+            minHitsStreamLines = options.get<int>("Number of streamlines");
 
             int numRows = numCells/500.0 + 1.0;
             double partition = 1.00/numRows;
@@ -282,11 +289,12 @@ namespace {
             //noiseTexture2D = getGraphics("noiseTexture2D").makePrimitive();
             licTexture = getGraphics("licTexture").makePrimitive();
 
-            std::shared_ptr< Texture > noise = createTexture(anzPixelTexturex, anzPixelTexturey, true);
-            noiseTexture->setTexture(0, *noise);
-            std::shared_ptr< Texture > noise2D = createTexture(anzPixelTexturex, anzPixelTexturey, true);
-            //noiseTexture2D->setTexture(0, *noise2D);
+            std::shared_ptr<Texture> noise = createTexture(anzPixelTexturex, anzPixelTexturey, true);
             std::shared_ptr<Texture> lic = createTexture(anzPixelTexturex, anzPixelTexturey, false);
+
+            noiseTexture->setTexture(0, *noise);
+                //std::shared_ptr<Texture> noise2D = createTexture(anzPixelTexturex, anzPixelTexturey, true);
+                //noiseTexture2D->setTexture(0, *noise2D);
             licTexture->setTexture(0, *lic);
 
             std::vector<std::vector<double>> values;
@@ -312,63 +320,43 @@ namespace {
             size_t d3_out = 0;
 
             size_t akt_cell = 0;
-            for (size_t yy=0; yy < 1/*numRows*/; yy++){
+            for (size_t yy=0; yy < numRows/*numRows*/; yy++){
                 for (size_t xx=0; xx < 500/*500*/; xx++){
                     // numPixels * numPixels fuer das eine Dreieck
                     size_t index_cell = akt_cell++;
-                    if(index_cell >= numCells){
-                        continue;
+                    if(index_cell >= numCells or abortFlag){
+                        break;
                     }
 
                     // Welches Dreieck ist das?
                     Cell c = grid->cell(index_cell);
-                    //infoLog() << "Cell: " << index_cell << std::endl;
-                    //infoLog() << "Eckpunkte: " << points[c.index(0)] << ";" << points[c.index(1)] << ";" << points[c.index(2)] << std::endl;
                     Point3 p0 = {xx*numPixels, yy*numPixels, 0};
                     Point3 p1 = {xx*numPixels+numPixels, yy*numPixels, 0};
                     Point3 p2 = {xx*numPixels+size_t(0.5*numPixels), yy*numPixels + numPixels, 0};
                     Point3 b = p2-p0;
                     Point3 a = p1-p0;
-
+#pragma omp parallel
+#pragma omp for nowait
                     for (size_t y=0; y <= numPixels; y++){
                         for (size_t x=0; x <= numPixels; x++){
                             size_t pos_x = xx*numPixels+x;
                             size_t pos_y = yy*numPixels+y;
-                            //hits[pos_y][pos_x] = -1;
+                            if (hits[pos_y][pos_x] > minHitsStreamLines){
+                                continue;
+                            }
 
                             double v = (-b[1]*pos_x + b[0]*pos_y + b[1]*p0[0] -b[0]*p0[1]) / (b[0]*a[1]-b[1]*a[0]); // nach Formel berechnet, wenn 0<= v <= 1, dann okay
                             double k = (pos_x-p0[0] - v*a[0]) / (b[0]); // nach Formel berechnet, wenn 0<= k <= 1, dann okay
-                            //v = trunc(v*1000) / 1000;
-                            //k = trunc(k*1000) / 1000;
-                            float delta = 0.02;
+                            float delta = 0.01;
                             d2_out++;
                             if (v+delta > 0 and v-delta < 1){
                                 if(k+delta > 0 and k-delta < 1){
-                                    //hits[pos_y][pos_x] = -1;
                                     Point3 fcoord = coord_to_field(v, k, c, points);
                                     d2_in++;
                                     if (grid->contains(c, fcoord)){
-                                        //hits[pos_y][pos_x] += 1;
-                                        //values[pos_y][pos_x] += 1;
                                         d3_in++;
                                         std::vector<std::vector<Point3>> points_sl = compute_streamline(field, fcoord, c, grid);
-                                        // TODO: in runge kutta abbrechen, wenn punkt nicht mehr in eigentlicher Zelle ist, sondern schon in einer anderen?
                                         compute_convolution(noise, points_sl, pos_x, pos_y, values, hits, index_cell, c, numPixels, points);
-
-/*
-                                        infoLog() << "fcoord:    " << fcoord << " x:" << pos_x << " y:" << pos_y << " v:" << v << " k:" << k <<  std::endl;
-
-                                        Point3 pp0 = points[c.index(0)];
-                                        Point3 pp1 = points[c.index(1)];
-                                        Point3 pp2 = points[c.index(2)];
-                                        Point3 aa = pp2-pp0;
-                                        Point3 bb = pp1-pp0;
-
-                                        double vv = (-bb[1]*fcoord[0] + bb[0]*fcoord[1] + bb[1]*pp0[0] -bb[0]*pp0[1]) / (bb[0]*aa[1]-bb[1]*aa[0]);
-                                        double kk = (fcoord[0]-pp0[0] - vv*aa[0]) / (bb[0]);
-                                        Point3 d3_d2 = coord_to_texture(vv, kk, index_cell, partition);
-                                        infoLog() << "trans:     " << d3_d2 << " x:" << pos_x << " y:" << pos_y << " v:" << vv << " k:" << kk <<  std::endl;
-*/
                                     } else{
                                         d3_out++;
                                     }
@@ -379,24 +367,32 @@ namespace {
                     }
                 }
             }
-
+#pragma omp barrier
             infoLog() << "d2_in:" << d2_in << std::endl;
             infoLog() << "d2_out:" << d2_out-d2_in << std::endl;
             infoLog() << "d3_in:" << d3_in << std::endl;
             infoLog() << "d3_out:" << d3_out << std::endl;
 
             infoLog() << "Schritt 3: Berechne Farbwerte." << std::endl;
-            for (size_t y = 0; y < anzPixelTexturey; y++) {
-                for (size_t x = 0; x < anzPixelTexturex; x++) {
-                    // Color = Summierter Farbwert durch Anzahl Treffer
 
-                    //noise2D->set({0, 0, 1}, x, y);
-                    float sum = values[y][x] / float(hits[y][x]);
-                    lic->set({sum, sum, sum}, x, y);
-
+#pragma omp parallel
+            {
+#pragma omp for nowait
+                for (size_t y = 0; y < anzPixelTexturey; y++) {
+                    for (size_t x = 0; x < anzPixelTexturex; x++) {
+                        // Color = Summierter Farbwert durch Anzahl Treffer
+                        if (hits[y][x] <= -2) {
+                            lic->set({0, 1, 0}, x, y);
+                        } else if (hits[y][x] == 0) {
+                            lic->set(noise->get(x, y), x, y);
+                        } else if (hits[y][x] > 0){
+                            float sum = values[y][x] / float(hits[y][x]);
+                            lic->set({sum, sum, sum}, x, y);
+                        }
+                    }
                 }
+#pragma omp barrier
             }
-
             infoLog() << "Schritt 4: Erzeuge Texturkoordinaten." << std::endl;
             int start = 0;
             int end = 500;
@@ -408,11 +404,11 @@ namespace {
                 for(int i = start; i < end ; i++){
 
                     Cell cell = grid->cell(i);
-
+/*
                     Point3 p0 = points[cell.index(0)];
                     Point3 p1 = points[cell.index(2)];
                     Point3 p2 = points[cell.index(1)];
-/*
+
                     Point3 a = p1 - p0;
                     Point3 b = p2 - p0;
                     Point3 c = p2 - p1;
@@ -478,6 +474,7 @@ namespace {
             texCoords2D[2] = Point3(1.0, 1.0, 1.0); texCoords2D[3] = Point3(0.0, 1.0, 1.0);
 */
             noiseTexture->add( Primitive::TRIANGLES ).setTexCoords( 0, texCoords ).setVertices(vertices);
+
             //noiseTexture2D->add(Primitive::QUADS).setTexCoords(0, texCoords2D).setVertices(cube, sides);;
             licTexture->add( Primitive::TRIANGLES ).setTexCoords( 0, texCoords ).setVertices(vertices);
         }
