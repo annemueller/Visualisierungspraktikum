@@ -10,6 +10,6 @@ using namespace fantom;
 
 std::vector<Point3>
 runge_kutta(std::shared_ptr<const TensorFieldContinuous<3, Vector3> > &field, size_t steps, double h,
-            Point3 start, bool vor);
+            Point3 start, bool vor, Point3 normale, std::shared_ptr<const Grid<3 >> grid, Cell c);
 
 #endif //VISPRAKTIKUM_RUNGE_KUTTA_H

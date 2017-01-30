@@ -15,7 +15,7 @@ using namespace fantom;
 namespace {
     class LIC : public VisAlgorithm {
         std::unique_ptr<Primitive> noiseTexture;
-        std::unique_ptr<Primitive> noiseTexture2D;
+        //std::unique_ptr<Primitive> noiseTexture2D;
         std::unique_ptr<Primitive> licTexture;
 
         size_t anzPixelTexturex = 0;
@@ -45,7 +45,7 @@ namespace {
                     : VisAlgorithm::VisOutputs(control) {
                 addGraphics("noiseTexture");
                 addGraphics("licTexture");
-                addGraphics("noiseTexture2D");
+                //addGraphics("noiseTexture2D");
             }
         };
 
@@ -83,29 +83,57 @@ namespace {
         }
 
         inline Point3 coord_to_texture(double v, double k, size_t index, double part){
-            Point3 p0 = {(index%500)/500.0      , (index/500)*part, 0};
+            /*Point3 p0 = {(index%500)/500.0      , (index/500)*part, 0};
             Point3 p1 = {(index%500)/500.0      , (index/500)*part+part, 0};
             Point3 p2 = {((index%500)+1)/500.0  , (index/500)*part+part, 0};
-
-            Point3 a = p2-p0;
-            Point3 b = p1-p0;
+*/
+            Point3 p0 = {(index)%500*part      , size_t(index/500)*part, 0};
+            Point3 p1 = {(index%500)*part + part     , size_t(index/500)*part, 0};
+            Point3 p2 = {((index)%500)*part + 0.5*part  , size_t(index/500)*part+part, 0};
+            Point3 b = p2-p0;
+            Point3 a = p1-p0;
             Point3 x = v * a + k * b + p0;
             return x;
         }
 
-        std::vector<std::vector<Point3>> compute_streamline(std::shared_ptr<const TensorFieldContinuous<3, Vector3> > &field, Point3 fcoord) {
-            std::vector<Point3> points = runge_kutta(field, 20, 1, fcoord, true); // foreward
-            std::vector<Point3> points2 = runge_kutta(field, 20, 1, fcoord, false); // bachward
+        Point3 getNormale(Cell c, std::shared_ptr<const Grid<3 >> grid){
+            Point3 p0 = grid->points()[c.index(0)];
+            Point3 p1 = grid->points()[c.index(1)];
+            Point3 p2 = grid->points()[c.index(2)];
+
+            Point3 a = p1 - p0;
+            Point3 b = p2 - p0;
+
+            double a1 = a[0];
+            double a2 = a[1];
+            double a3 = a[2];
+
+            double b1 = b[0];
+            double b2 = b[1];
+            double b3 = b[2];
+
+            Point3 normale;
+            normale[0] = a2*b3 - a3*b2;
+            normale[1] = a3*b1 - a1*b3;
+            normale[2] = a1*b2 - a2*b1;
+
+            return normale;
+        }
+
+        std::vector<std::vector<Point3>> compute_streamline(std::shared_ptr<const TensorFieldContinuous<3, Vector3> > &field, Point3 fcoord, Cell c, std::shared_ptr<const Grid<3 >> grid) {
+            Point3 normale = getNormale(c, grid);
+            std::vector<Point3> points = runge_kutta(field, 20, 0.04, fcoord, true, normale, grid, c); // foreward
+            std::vector<Point3> points2 = runge_kutta(field, 20, 0.04, fcoord, false, normale, grid, c); // bachward
             return {points, points2};
         }
 
-        void compute_convolution(std::shared_ptr<Texture> &noise, std::vector<std::vector<Point3>> &pointsStreamline, size_t sx, size_t sy, std::vector<std::vector<double>> &values, std::vector<std::vector<double>> &hits) {
+        void compute_convolution(std::shared_ptr<Texture> &noise, std::vector<std::vector<Point3>> &pointsStreamline, size_t sx, size_t sy, std::vector<std::vector<double>> &values, std::vector<std::vector<double>> &hits, size_t index_cell, Cell c, double part, const ValueArray<Point3> &points) {
             /*
             const size_t L = 40; // wie viele Pixel maximal in Berechnung nutzen?
             const size_t B = 15; // wie viele Nachbarn zu {sx,sy} duerfen einen Wert bekommen?
             const size_t max_hits = 10;
              */
-/*
+
             // Berechne von Stromlinie getroffene Pixel, nach Bresenham
 
             // Liste mit 2 Eintraegen (fore- and backward), die jeweils eine Liste mit Vektoren enthalten, den Punkten
@@ -116,15 +144,35 @@ namespace {
                 std::vector<std::vector<size_t>> pixels; // Liste mit Punkten
 
                 for (size_t i = 0; i < pointsStreamline[fb].size() - 1; i++) {
-                    Point2 p0 = coord_to_texture(pointsStreamline[fb][i]); // Punkt1 aus Stromlinie
-                    Point2 p1 = coord_to_texture(pointsStreamline[fb][i+1]); // Punkt2 aus Stromlinie
+                    Point3 pp0 = points[c.index(0)];
+                    Point3 pp1 = points[c.index(1)];
+                    Point3 pp2 = points[c.index(2)];
+                    Point3 aa = pp2-pp0;
+                    Point3 bb = pp1-pp0;
+
+                    double pos_x = pointsStreamline[fb][i][0];
+                    double pos_y = pointsStreamline[fb][i][1];
+                    double vv = (-bb[1]*pos_x + bb[0]*pos_y + bb[1]*pp0[0] -bb[0]*pp0[1]) / (bb[0]*aa[1]-bb[1]*aa[0]);
+                    double kk = (pos_x-pp0[0] - vv*aa[0]) / (bb[0]);
+
+                    Point3 ppp0 = coord_to_texture(vv, kk, index_cell, part);
+                    //infoLog() << "pos_x:" << pos_x << " pos_y:" << pos_y << " v:" << vv << " k:" << kk << " p:" << ppp0 << std::endl;
+
+                    pos_x = pointsStreamline[fb][i][0];
+                    pos_y = pointsStreamline[fb][i][1];
+                    vv = (-bb[1]*pos_x + bb[0]*pos_y + bb[1]*pp0[0] -bb[0]*pp0[1]) / (bb[0]*aa[1]-bb[1]*aa[0]);
+                    kk = (pos_x-pp0[0] - vv*aa[0]) / (bb[0]);
+                    Point3 ppp1 = coord_to_texture(vv, kk, index_cell, part);
+
+                    //Point2 p0 = coord_to_texture(pointsStreamline[fb][i]); // Punkt1 aus Stromlinie
+                    //Point2 p1 = coord_to_texture(pointsStreamline[fb][i+1]); // Punkt2 aus Stromlinie
                     // Coord sind in Texturcoord und erzeuge Liste mit getroffenen Pixeln der Geraden aus p1 und p2
 
                     //std::vector<std::vector<size_t>> pixel = bresenham(p1[0], p1[1], p2[0], p2[1]);
                     //Point3 col = bresenham(p1[0], p1[1], p2[0], p2[1]);
 
-                    size_t x0 = p0[0]; size_t y0 = p0[1];
-                    size_t x1 = p1[0]; size_t y1 = p1[1];
+                    size_t x0 = ppp0[0]; size_t y0 = ppp0[1];
+                    size_t x1 = ppp1[0]; size_t y1 = ppp1[1];
 
                     int dx =  abs(x1-x0), sx = x0<x1 ? 1 : -1;
                     int dy = -abs(y1-y0), sy = y0<y1 ? 1 : -1;
@@ -172,8 +220,8 @@ namespace {
             size_t ende = pixel_list.size();//(pos_mid + B) > pixel_list.size() ? pixel_list.size() : pos_mid+B; // rechter Rand
 
             for(size_t ne=start; ne < ende; ne++) {
-                size_t xpos = pixel_list[ne][0]>=anzPixelTexture ? anzPixelTexture-1 : pixel_list[ne][0];
-                size_t ypos = pixel_list[ne][1]>=anzPixelTexture ? anzPixelTexture-1 : pixel_list[ne][1];
+                size_t xpos = pixel_list[ne][0]>=anzPixelTexturex ? anzPixelTexturex-1 : pixel_list[ne][0];
+                size_t ypos = pixel_list[ne][1]>=anzPixelTexturey ? anzPixelTexturey-1 : pixel_list[ne][1];
 
                 if (hits[ypos][xpos] >= max_hits){
                     //infoLog() << "continue;" << std::endl;
@@ -187,11 +235,15 @@ namespace {
                 for (int i = -B; i <= B; i++) {
                     if (pos + i < 0 or pos + i > pixel_list.size() - 1)
                         continue;
-                    val += noise->get(pixel_list[pos + i][0], pixel_list[pos + i][1], 0).r();
-                    anzahl++;
+                    //infoLog() << "size:" << pixel_list.size() << " i:" << i << " pos:" << pos << std::endl;
+                    //infoLog() << pixel_list[pos + 1][0] << "; " << pixel_list[pos + i][1] << std::endl;
+                    if (pixel_list[pos + i][0] < anzPixelTexturex and pixel_list[pos + i][1] < anzPixelTexturey) {
+                        val += noise->get(pixel_list[pos + i][0], pixel_list[pos + i][1], 0).r();
+                        anzahl++;
+                       // infoLog() << "ja" << std::endl;
+                    }
                 }
                 double sumr = val / anzahl;
-
                 // nun Farbe an Stelle von pos in output speichern, gehe weiter nach links und rechts und mache das gleiche
                 if (ne == pos_mid) {
                     values[sy][sx] += sumr;
@@ -201,7 +253,6 @@ namespace {
                     hits[ypos][xpos] += 1;
                 }
             }
-*/
         }
 
         virtual void execute(const Algorithm::Options &options, const volatile bool &abortFlag) override {
@@ -217,7 +268,9 @@ namespace {
             // Variablen anlegen
             const ValueArray<Point3> &points = grid->points();
             size_t numCells = grid->numCells();
+            //numCells = 501;
             int numPixels = options.get<int>("Number of pixel");
+
             int numRows = numCells/500.0 + 1.0;
             double partition = 1.00/numRows;
             anzPixelTexturex = numPixels*500+1;
@@ -226,13 +279,13 @@ namespace {
             infoLog() << "Schritt 1: Texturen erzeugen." << std::endl;
 
             noiseTexture = getGraphics("noiseTexture").makePrimitive();
-            noiseTexture2D = getGraphics("noiseTexture2D").makePrimitive();
+            //noiseTexture2D = getGraphics("noiseTexture2D").makePrimitive();
             licTexture = getGraphics("licTexture").makePrimitive();
 
             std::shared_ptr< Texture > noise = createTexture(anzPixelTexturex, anzPixelTexturey, true);
             noiseTexture->setTexture(0, *noise);
             std::shared_ptr< Texture > noise2D = createTexture(anzPixelTexturex, anzPixelTexturey, true);
-            noiseTexture2D->setTexture(0, *noise2D);
+            //noiseTexture2D->setTexture(0, *noise2D);
             std::shared_ptr<Texture> lic = createTexture(anzPixelTexturex, anzPixelTexturey, false);
             licTexture->setTexture(0, *lic);
 
@@ -259,8 +312,8 @@ namespace {
             size_t d3_out = 0;
 
             size_t akt_cell = 0;
-            for (size_t yy=0; yy < 0*2+1*numRows; yy++){
-                for (size_t xx=0; xx < 0*2+1*500; xx++){
+            for (size_t yy=0; yy < 1/*numRows*/; yy++){
+                for (size_t xx=0; xx < 500/*500*/; xx++){
                     // numPixels * numPixels fuer das eine Dreieck
                     size_t index_cell = akt_cell++;
                     if(index_cell >= numCells){
@@ -269,9 +322,11 @@ namespace {
 
                     // Welches Dreieck ist das?
                     Cell c = grid->cell(index_cell);
+                    //infoLog() << "Cell: " << index_cell << std::endl;
+                    //infoLog() << "Eckpunkte: " << points[c.index(0)] << ";" << points[c.index(1)] << ";" << points[c.index(2)] << std::endl;
                     Point3 p0 = {xx*numPixels, yy*numPixels, 0};
-                    Point3 p1 = {xx*numPixels, yy*numPixels + numPixels, 0};
-                    Point3 p2 = {xx*numPixels+numPixels, yy*numPixels + numPixels, 0};
+                    Point3 p1 = {xx*numPixels+numPixels, yy*numPixels, 0};
+                    Point3 p2 = {xx*numPixels+size_t(0.5*numPixels), yy*numPixels + numPixels, 0};
                     Point3 b = p2-p0;
                     Point3 a = p1-p0;
 
@@ -289,15 +344,31 @@ namespace {
                             d2_out++;
                             if (v+delta > 0 and v-delta < 1){
                                 if(k+delta > 0 and k-delta < 1){
-                                    hits[pos_y][pos_x] = -1;
+                                    //hits[pos_y][pos_x] = -1;
                                     Point3 fcoord = coord_to_field(v, k, c, points);
                                     d2_in++;
                                     if (grid->contains(c, fcoord)){
-                                        hits[pos_y][pos_x] = -2;
+                                        //hits[pos_y][pos_x] += 1;
+                                        //values[pos_y][pos_x] += 1;
                                         d3_in++;
-                                        std::vector<std::vector<Point3>> points = compute_streamline(field, fcoord);
+                                        std::vector<std::vector<Point3>> points_sl = compute_streamline(field, fcoord, c, grid);
                                         // TODO: in runge kutta abbrechen, wenn punkt nicht mehr in eigentlicher Zelle ist, sondern schon in einer anderen?
-                                        //compute_convolution(noise, points, x, y, values, hits);
+                                        compute_convolution(noise, points_sl, pos_x, pos_y, values, hits, index_cell, c, numPixels, points);
+
+/*
+                                        infoLog() << "fcoord:    " << fcoord << " x:" << pos_x << " y:" << pos_y << " v:" << v << " k:" << k <<  std::endl;
+
+                                        Point3 pp0 = points[c.index(0)];
+                                        Point3 pp1 = points[c.index(1)];
+                                        Point3 pp2 = points[c.index(2)];
+                                        Point3 aa = pp2-pp0;
+                                        Point3 bb = pp1-pp0;
+
+                                        double vv = (-bb[1]*fcoord[0] + bb[0]*fcoord[1] + bb[1]*pp0[0] -bb[0]*pp0[1]) / (bb[0]*aa[1]-bb[1]*aa[0]);
+                                        double kk = (fcoord[0]-pp0[0] - vv*aa[0]) / (bb[0]);
+                                        Point3 d3_d2 = coord_to_texture(vv, kk, index_cell, partition);
+                                        infoLog() << "trans:     " << d3_d2 << " x:" << pos_x << " y:" << pos_y << " v:" << vv << " k:" << kk <<  std::endl;
+*/
                                     } else{
                                         d3_out++;
                                     }
@@ -318,22 +389,11 @@ namespace {
             for (size_t y = 0; y < anzPixelTexturey; y++) {
                 for (size_t x = 0; x < anzPixelTexturex; x++) {
                     // Color = Summierter Farbwert durch Anzahl Treffer
-                    if (hits[y][x] == -1) { // dort kein Dreieck, also kein Pixel
-                        //float sum = values[y][x] / float(hits[y][x]);
-                        //lic->set({sum, sum, sum}, x, y);
-                        lic->set({1, 0, 0}, x, y);
-                        noise2D->set({1, 0, 0}, x, y);
-                    } else if (hits[y][x] == -2) { // dort kein Dreieck, also kein Pixel
-                        //float sum = values[y][x] / float(hits[y][x]);
-                        //lic->set({sum, sum, sum}, x, y);
-                        lic->set({0, 1, 0}, x, y);
-                        noise2D->set({0, 1, 0}, x, y);
-                    } else if (hits[y][x] >= 0){
-                        //Color col = noise->get(x, y, 0);
-                        lic->set({0, 0, 1}, x, y);
-                        noise2D->set({0, 0, 1}, x, y);
-                        //lic->set(col, x, y);
-                    }
+
+                    //noise2D->set({0, 0, 1}, x, y);
+                    float sum = values[y][x] / float(hits[y][x]);
+                    lic->set({sum, sum, sum}, x, y);
+
                 }
             }
 
@@ -349,13 +409,53 @@ namespace {
 
                     Cell cell = grid->cell(i);
 
+                    Point3 p0 = points[cell.index(0)];
+                    Point3 p1 = points[cell.index(2)];
+                    Point3 p2 = points[cell.index(1)];
+/*
+                    Point3 a = p1 - p0;
+                    Point3 b = p2 - p0;
+                    Point3 c = p2 - p1;
+
+                    Point3 ls;
+                    Point3 pl, pr, p;
+                    if (norm(a) > norm(b) and norm(a) > norm(c)){
+                        // a
+                        ls = a;
+                        pl = p0;
+                        pr = p1;
+                        p = p2;
+                    } else if (norm(b) > norm(a) and norm(b) > norm(c)){
+                        // b
+                        ls = b;
+                        pl = p0;
+                        pr = p2;
+                        p = p1;
+                    } else{
+                        // c
+                        ls = c;
+                        pl = p1;
+                        pr = p2;
+                        p = p0;
+                    }
+
+                    Point3 k = p-pl;
+                    k = k / norm(k);
+                    double kx = k[0] / 500;
+                    kx = kx < 0 ? -kx : kx;
+                    double ky = k[1] / numRows;
+                    ky = ky < 0 ? -ky : ky;
+*/
                     vertices.push_back( points[cell.index(0)] );
                     vertices.push_back( points[cell.index(2)] );
                     vertices.push_back( points[cell.index(1)] );
 
-                    texCoords.push_back( Point3(cellRow/500.00,j*partition,0) );//1
-                    texCoords.push_back( Point3(cellRow/500.00,j*partition+partition,0) );//2
-                    texCoords.push_back( Point3((cellRow+1)/500.00, j*partition+partition,0) );//3
+                    texCoords.push_back( Point3(cellRow/500.00 + 0.0002  ,j*partition,0) );//1
+                    //infoLog() << texCoords.back() << std::endl;
+                    texCoords.push_back( Point3((cellRow+1)/500.00 - 0.0002, j*partition,0) );//2
+                    //infoLog() << texCoords.back() << std::endl;
+                    texCoords.push_back( Point3((cellRow)/500.00 + 0.001, j*partition+partition - (0.134/numRows), 0) );//3
+                    //infoLog() << texCoords.back() << std::endl;
                     cellRow += 1;
                 }
 
@@ -366,7 +466,7 @@ namespace {
                     end = numCells;
                 }
             }
-
+/*
             std::vector<Point3> cube(4);
             cube[0] = Point3(0, 0, 5);                               cube[1] = Point3(anzPixelTexturex, 0, 5);
             cube[2] = Point3(anzPixelTexturex, anzPixelTexturey, 5); cube[3] = Point3(0, anzPixelTexturey, 5);
@@ -376,9 +476,9 @@ namespace {
             std::vector<Point3> texCoords2D(4);
             texCoords2D[0] = Point3(0.0, 0.0, 1.0); texCoords2D[1] = Point3(1.0, 0.0, 1.0);
             texCoords2D[2] = Point3(1.0, 1.0, 1.0); texCoords2D[3] = Point3(0.0, 1.0, 1.0);
-
+*/
             noiseTexture->add( Primitive::TRIANGLES ).setTexCoords( 0, texCoords ).setVertices(vertices);
-            noiseTexture2D->add(Primitive::QUADS).setTexCoords(0, texCoords2D).setVertices(cube, sides);;
+            //noiseTexture2D->add(Primitive::QUADS).setTexCoords(0, texCoords2D).setVertices(cube, sides);;
             licTexture->add( Primitive::TRIANGLES ).setTexCoords( 0, texCoords ).setVertices(vertices);
         }
     };
